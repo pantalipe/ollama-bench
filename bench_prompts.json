@@ -1,0 +1,58 @@
+{
+  "prompts": [
+    {
+      "id": "commit_msg_simple",
+      "category": "text",
+      "task": "text",
+      "description": "Commit message from a small Python diff",
+      "consistency_runs": 3,
+      "system": "You are a git commit message generator. Output ONE single line following Conventional Commits: <type>(<scope>): <description>. Write NOTHING else.",
+      "prompt": "Commit message:\n\n### git diff\n--- a/server.py\n+++ b/server.py\n@@ -12,6 +12,10 @@ from panda_client import PandaClient\n+import logging\n+\n+logging.basicConfig(level=logging.INFO)\n+logger = logging.getLogger(__name__)\n\n def start_server():\n-    print('Starting...')\n+    logger.info('Starting server on port %s', PORT)"
+    },
+    {
+      "id": "commit_msg_complex",
+      "category": "text",
+      "task": "text",
+      "description": "Commit message from a multi-file diff",
+      "consistency_runs": 3,
+      "system": "You are a git commit message generator. Output ONE single line following Conventional Commits: <type>(<scope>): <description>. Write NOTHING else.",
+      "prompt": "Commit message:\n\n### git diff\n--- a/panda_client.py\n+++ b/panda_client.py\n@@ -1,5 +1,6 @@\n+DEFAULT_CODE_MODEL = 'deepseek-coder:6.7b-instruct-q4_K_M'\n-DEFAULT_CODE_MODEL = 'deepseek-coder'\n\n--- a/README.md\n+++ b/README.md\n@@ -10,0 +11,3 @@\n+## Model Routing\n+Text tasks use phi3. Code tasks use deepseek-coder:6.7b-instruct-q4_K_M.\n+Auto-routing is based on keyword scoring."
+    },
+    {
+      "id": "code_python_function",
+      "category": "code",
+      "task": "code",
+      "description": "Generate a small Python utility function",
+      "consistency_runs": 3,
+      "system": "You are a Python developer. Output ONLY the function code, no explanation, no markdown fences.",
+      "prompt": "Write a Python function called `slugify(text: str) -> str` that converts a string to a URL-safe slug: lowercase, spaces to hyphens, remove special characters, collapse multiple hyphens."
+    },
+    {
+      "id": "code_solidity_view",
+      "category": "code",
+      "task": "code",
+      "description": "Generate a Solidity view function",
+      "consistency_runs": 3,
+      "system": "You are a Solidity developer. Output ONLY the Solidity function code, no explanation, no markdown fences.",
+      "prompt": "Write a Solidity view function called `getPoolRatio()` that returns the ratio of tokenReserve to bnbReserve as a uint256 scaled by 1e18. Both reserves are state variables of type uint256. Handle division by zero by returning 0."
+    },
+    {
+      "id": "readme_section",
+      "category": "text",
+      "task": "text",
+      "description": "Generate a README features section",
+      "consistency_runs": 3,
+      "system": "You are a technical writer. Output ONLY the markdown section, no fences, no preamble.",
+      "prompt": "Write a '## Features' section for a README of a project called PandaAgent. It is a local Python AI agent that routes tasks between phi3 (text) and deepseek-coder (code) via Ollama, with no cloud dependency. Include 4-5 bullet points."
+    },
+    {
+      "id": "script_hook",
+      "category": "text",
+      "task": "text",
+      "description": "Generate a short-form video hook (rotman use case)",
+      "consistency_runs": 3,
+      "system": "You are a short-form video scriptwriter. Write ONLY the hook (first 5 seconds), conversational, no stage directions.",
+      "prompt": "Write a hook for a short video about: 'Why Bitcoin has a fixed supply of 21 million coins and why that matters for you.' Language: pt-BR."
+    }
+  ]
+}
