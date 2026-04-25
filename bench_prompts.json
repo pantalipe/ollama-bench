@@ -46,13 +46,22 @@
       "prompt": "Write a '## Features' section for a README of a project called PandaAgent. It is a local Python AI agent that routes tasks between phi3 (text) and deepseek-coder (code) via Ollama, with no cloud dependency. Include 4-5 bullet points."
     },
     {
-      "id": "script_hook",
+      "id": "script_hook_ptbr",
       "category": "text",
       "task": "text",
-      "description": "Generate a short-form video hook (rotman use case)",
+      "description": "Generate a short-form video hook in pt-BR (bitcoinfacil use case)",
       "consistency_runs": 3,
       "system": "You are a short-form video scriptwriter. Write ONLY the hook (first 5 seconds), conversational, no stage directions.",
       "prompt": "Write a hook for a short video about: 'Why Bitcoin has a fixed supply of 21 million coins and why that matters for you.' Language: pt-BR."
+    },
+    {
+      "id": "script_hook_en",
+      "category": "text",
+      "task": "text",
+      "description": "Generate a short-form video hook in English (PandaPoints use case)",
+      "consistency_runs": 3,
+      "system": "You are a short-form video scriptwriter. Write ONLY the hook (first 5 seconds), conversational, no stage directions.",
+      "prompt": "Write a hook for a short video about: 'Why earning crypto rewards for everyday purchases is the future of loyalty programs.' Language: English."
     }
   ]
 }
