@@ -1,1 +1,0 @@
-feat(bench): add script_hook_ptbr/en prompts and llama3.1:8b + mistral:7b to DEFAULT_MODELS
