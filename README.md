@@ -66,7 +66,8 @@ Prompts in `bench_prompts.json` mirror real ecosystem tasks:
 | `code_python_function` | code | Generate a small Python utility function |
 | `code_solidity_view` | code | Generate a Solidity view function |
 | `readme_section` | text | Generate a README features section |
-| `script_hook` | text | Short-form video hook (rotman use case) |
+| `script_hook_ptbr` | text | Short-form video hook in pt-BR (bitcoinfacil channel) |
+| `script_hook_en` | text | Short-form video hook in English (PandaPoints channel) |
 
 ## Adding prompts
 
