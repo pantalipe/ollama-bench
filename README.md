@@ -26,6 +26,9 @@ python bench.py --list-prompts
 
 # Custom prompts file
 python bench.py --prompts my_prompts.json
+
+# Compare two result files
+python bench.py --compare results/20260425_bench.json results/20260506_bench.json
 ```
 
 ## Output

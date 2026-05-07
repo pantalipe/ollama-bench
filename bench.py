@@ -301,6 +301,126 @@ def run_prompt(model: str, prompt_def: dict) -> dict:
 
 
 # -------------------------------------------------
+# COMPARE
+# -------------------------------------------------
+
+def compare_results(path_a: str, path_b: str) -> None:
+    """
+    Print a side-by-side comparison of two bench result JSON files.
+
+    For each (model, prompt_id) pair present in both files, shows:
+      - avg tokens/s       (higher is better)
+      - avg time-to-first-token  (lower is better)
+      - consistency score  (higher is better)
+    with percentage deltas and a ✓/✗ improvement indicator.
+    """
+    for path in (path_a, path_b):
+        if not os.path.exists(path):
+            print(f"[ERROR] File not found: {path}")
+            sys.exit(1)
+
+    with open(path_a, encoding="utf-8") as f:
+        data_a = json.load(f)
+    with open(path_b, encoding="utf-8") as f:
+        data_b = json.load(f)
+
+    def build_index(data):
+        idx = {}
+        for r in data.get("results", []):
+            key = (r["model"], r["prompt_id"])
+            idx[key] = r.get("summary", {})
+        return idx
+
+    idx_a = build_index(data_a)
+    idx_b = build_index(data_b)
+
+    common_keys = sorted(k for k in idx_a if k in idx_b)
+    if not common_keys:
+        print("[compare] No matching (model, prompt_id) pairs found in both files.")
+        return
+
+    # ── header ────────────────────────────────────────────────────────────────
+    print("\nollama-bench --compare")
+    print(f"  A: {os.path.basename(path_a):<50}  {data_a.get('timestamp','')[:19]}")
+    print(f"  B: {os.path.basename(path_b):<50}  {data_b.get('timestamp','')[:19]}")
+    if data_a.get("ollama_version") != data_b.get("ollama_version"):
+        print(f"  Ollama: A={data_a.get('ollama_version')}  B={data_b.get('ollama_version')}")
+    print()
+
+    # ── helpers ───────────────────────────────────────────────────────────────
+
+    def fmt(val, decimals=2):
+        return f"{val:>7.{decimals}f}" if val is not None else "      —"
+
+    def delta(a, b, higher_is_better=True):
+        """Return a short delta string with improvement indicator."""
+        if a is None or b is None or a == 0:
+            return "       —"
+        pct = (b - a) / abs(a) * 100
+        improved = (pct > 0) == higher_is_better
+        tag  = "✓" if improved else "✗"
+        sign = "+" if pct > 0 else ""
+        return f"{tag} {sign}{pct:.1f}%"
+
+    # ── per-model tables ──────────────────────────────────────────────────────
+    models = []
+    for model, _ in common_keys:
+        if model not in models:
+            models.append(model)
+
+    col = 28   # prompt_id column width
+
+    for model in models:
+        print(f"  model: {model}")
+        header = (
+            f"  {'prompt_id':<{col}}"
+            f"  {'tok/s A':>8}  {'tok/s B':>8}  {'Δ tok/s':>10}"
+            f"  {'ttft A':>7}  {'ttft B':>7}  {'Δ ttft':>10}"
+            f"  {'cons A':>7}  {'cons B':>7}  {'Δ cons':>10}"
+        )
+        print(header)
+        print("  " + "─" * (len(header) - 2))
+
+        for (m, pid) in common_keys:
+            if m != model:
+                continue
+            sa = idx_a[(m, pid)]
+            sb = idx_b[(m, pid)]
+
+            tps_a  = sa.get("avg_tokens_per_second")
+            tps_b  = sb.get("avg_tokens_per_second")
+            ttft_a = sa.get("avg_time_to_first_token_s")
+            ttft_b = sb.get("avg_time_to_first_token_s")
+            cons_a = sa.get("consistency_score")
+            cons_b = sb.get("consistency_score")
+
+            print(
+                f"  {pid:<{col}}"
+                f"  {fmt(tps_a):>8}  {fmt(tps_b):>8}  {delta(tps_a, tps_b, higher_is_better=True):>10}"
+                f"  {fmt(ttft_a,3):>7}  {fmt(ttft_b,3):>7}  {delta(ttft_a, ttft_b, higher_is_better=False):>10}"
+                f"  {fmt(cons_a):>7}  {fmt(cons_b):>7}  {delta(cons_a, cons_b, higher_is_better=True):>10}"
+            )
+        print()
+
+    # ── overall summary ───────────────────────────────────────────────────────
+    print("  Summary (tok/s):")
+    deltas = []
+    for (model, pid) in common_keys:
+        a = idx_a[(model, pid)].get("avg_tokens_per_second")
+        b = idx_b[(model, pid)].get("avg_tokens_per_second")
+        if a and b and a > 0:
+            deltas.append(((b - a) / abs(a) * 100, model, pid))
+
+    if deltas:
+        deltas.sort(key=lambda x: x[0], reverse=True)
+        pct, m, p = deltas[0]
+        print(f"  Most improved:  {m} / {p:<30}  {pct:+.1f}%")
+        pct, m, p = deltas[-1]
+        print(f"  Most regressed: {m} / {p:<30}  {pct:+.1f}%")
+    print()
+
+
+# -------------------------------------------------
 # ENTRY POINT
 # -------------------------------------------------
 
@@ -310,7 +430,13 @@ def main():
     parser.add_argument("--prompts",      default=DEFAULT_PROMPTS,           help="Path to bench_prompts.json")
     parser.add_argument("--prompt-ids",   nargs="+", default=[],             help="Run only specific prompt IDs")
     parser.add_argument("--list-prompts", action="store_true",               help="List available prompt IDs and exit")
+    parser.add_argument("--compare",      nargs=2, metavar="FILE",           help="Compare two result JSON files and exit")
     args = parser.parse_args()
+
+    # Compare mode — load two result files, print side-by-side diff and exit
+    if args.compare:
+        compare_results(args.compare[0], args.compare[1])
+        return
 
     # Load prompts
     if not os.path.exists(args.prompts):

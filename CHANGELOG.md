@@ -8,6 +8,17 @@ All notable changes to ollama-bench are documented here.
 
 ---
 
+## [1.1] — 2026-05-06
+
+### Added
+- `--compare A B` flag — side-by-side comparison of two result JSON files;
+  for each `(model, prompt_id)` pair present in both files shows tok/s, ttft
+  and consistency score with percentage deltas and a ✓/✗ improvement indicator
+- Overall summary block at the end of `--compare` output: most improved and
+  most regressed `(model, prompt_id)` pair by tok/s
+
+---
+
 ## [1.0] — 2026-04-25
 
 ### Added
