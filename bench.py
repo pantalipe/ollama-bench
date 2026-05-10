@@ -98,37 +98,58 @@ def llm_is_online() -> bool:
 # SYSTEM METRICS
 # -------------------------------------------------
 
+def _win_memory_status() -> tuple[float, float] | None:
+    """
+    Returns (total_mb, avail_mb) via Win32 GlobalMemoryStatusEx.
+    Works on Windows 10/11 regardless of wmic availability.
+    """
+    try:
+        import ctypes
+        import ctypes.wintypes
+
+        class MEMORYSTATUSEX(ctypes.Structure):
+            _fields_ = [
+                ("dwLength",                ctypes.wintypes.DWORD),
+                ("dwMemoryLoad",            ctypes.wintypes.DWORD),
+                ("ullTotalPhys",            ctypes.c_uint64),
+                ("ullAvailPhys",            ctypes.c_uint64),
+                ("ullTotalPageFile",        ctypes.c_uint64),
+                ("ullAvailPageFile",        ctypes.c_uint64),
+                ("ullTotalVirtual",         ctypes.c_uint64),
+                ("ullAvailVirtual",         ctypes.c_uint64),
+                ("ullAvailExtendedVirtual", ctypes.c_uint64),
+            ]
+
+        stat = MEMORYSTATUSEX()
+        stat.dwLength = ctypes.sizeof(stat)
+        ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat))
+        total_mb = round(stat.ullTotalPhys / 1024 / 1024, 1)
+        avail_mb = round(stat.ullAvailPhys / 1024 / 1024, 1)
+        return total_mb, avail_mb
+    except Exception:
+        return None
+
+
 def get_ram_used_mb() -> float | None:
-    """Returns used RAM in MB using wmic (Windows) or /proc/meminfo (Linux)."""
+    """Returns used RAM in MB. Uses Win32 API on Windows, /proc/meminfo on Linux."""
     try:
         if platform.system() == "Windows":
-            result = subprocess.run(
-                ["wmic", "OS", "get", "FreePhysicalMemory,TotalVisibleMemorySize", "/Value"],
-                capture_output=True, text=True, timeout=5,
-            )
-            values = {}
-            for line in result.stdout.splitlines():
-                if "=" in line:
-                    k, v = line.strip().split("=", 1)
-                    if v.strip().isdigit():
-                        values[k.strip()] = int(v.strip())
-            total = values.get("TotalVisibleMemorySize", 0)
-            free  = values.get("FreePhysicalMemory", 0)
-            if total:
-                return round((total - free) / 1024, 1)
+            mem = _win_memory_status()
+            if mem:
+                total_mb, avail_mb = mem
+                return round(total_mb - avail_mb, 1)
         else:
             with open("/proc/meminfo") as f:
                 lines = f.readlines()
-            mem = {}
+            info = {}
             for line in lines:
                 parts = line.split()
-                mem[parts[0].rstrip(":")] = int(parts[1])
-            total    = mem.get("MemTotal", 0)
-            free     = mem.get("MemFree", 0)
-            buffers  = mem.get("Buffers", 0)
-            cached   = mem.get("Cached", 0)
-            used_kb  = total - free - buffers - cached
-            return round(used_kb / 1024, 1)
+                info[parts[0].rstrip(":")] = int(parts[1])
+            total   = info.get("MemTotal", 0)
+            free    = info.get("MemFree", 0)
+            buffers = info.get("Buffers", 0)
+            cached  = info.get("Cached", 0)
+            return round((total - free - buffers - cached) / 1024, 1)
     except Exception:
         return None
 
@@ -151,24 +172,18 @@ def get_vram_used_mb() -> float | None:
 def get_system_info() -> dict:
     """Collect static system information once at startup."""
     info = {
-        "os":           platform.system(),
-        "os_ver":       platform.version(),
-        "cpu":          platform.processor() or platform.machine(),
-        "python":       platform.python_version(),
-        "ram_total_mb": None,
+        "os":            platform.system(),
+        "os_ver":        platform.version(),
+        "cpu":           platform.processor() or platform.machine(),
+        "python":        platform.python_version(),
+        "ram_total_mb":  None,
         "vram_total_mb": None,
     }
     try:
         if platform.system() == "Windows":
-            result = subprocess.run(
-                ["wmic", "OS", "get", "TotalVisibleMemorySize", "/Value"],
-                capture_output=True, text=True, timeout=5,
-            )
-            for line in result.stdout.splitlines():
-                if "TotalVisibleMemorySize=" in line:
-                    val = line.split("=")[1].strip()
-                    if val.isdigit():
-                        info["ram_total_mb"] = round(int(val) / 1024, 1)
+            mem = _win_memory_status()
+            if mem:
+                info["ram_total_mb"] = mem[0]
         else:
             with open("/proc/meminfo") as f:
                 for line in f:
@@ -248,7 +263,6 @@ def run_prompt(model: str, prompt_def: dict) -> dict:
         ram_after  = get_ram_used_mb()
         vram_after = get_vram_used_mb()
 
-        # Token count from usage field (may be absent on some servers)
         usage             = resp.get("usage", {})
         completion_tokens = usage.get("completion_tokens")
         tokens_per_second = (
@@ -256,7 +270,6 @@ def run_prompt(model: str, prompt_def: dict) -> dict:
             if (completion_tokens and total_duration_s > 0) else None
         )
 
-        # Extract generated text
         choices     = resp.get("choices", [])
         output_text = choices[0]["message"]["content"].strip() if choices else ""
         outputs.append(output_text)
@@ -265,7 +278,7 @@ def run_prompt(model: str, prompt_def: dict) -> dict:
             "run":                    i + 1,
             "tokens_generated":       completion_tokens,
             "tokens_per_second":      tokens_per_second,
-            "time_to_first_token_s":  None,   # not available without streaming
+            "time_to_first_token_s":  None,
             "total_duration_s":       total_duration_s,
             "ram_used_mb_before":     ram_before,
             "ram_used_mb_after":      ram_after,
@@ -281,7 +294,6 @@ def run_prompt(model: str, prompt_def: dict) -> dict:
         time_str = f"{total_duration_s:.2f}s"
         print(f"  {tps_str}  {time_str}")
 
-    # Summary
     valid_runs = [r for r in runs if "error" not in r]
     summary = {}
     if valid_runs:
@@ -295,7 +307,7 @@ def run_prompt(model: str, prompt_def: dict) -> dict:
 
         summary = {
             "avg_tokens_per_second":      avg("tokens_per_second"),
-            "avg_time_to_first_token_s":  None,   # not available without streaming
+            "avg_time_to_first_token_s":  None,
             "avg_total_duration_s":       avg("total_duration_s"),
             "avg_tokens_generated":       avg("tokens_generated"),
             "consistency_score":          consistency_score(outputs),
@@ -513,13 +525,13 @@ def main():
     out_path = os.path.join(RESULTS_DIR, f"{timestamp}_bench.json")
 
     output = {
-        "timestamp":   datetime.now().isoformat(),
-        "llm_server":  server_info,
+        "timestamp":    datetime.now().isoformat(),
+        "llm_server":   server_info,
         "llm_base_url": LLM_BASE_URL,
-        "system":      sys_info,
-        "models":      args.models,
-        "prompt_file": os.path.basename(args.prompts),
-        "results":     results,
+        "system":       sys_info,
+        "models":       args.models,
+        "prompt_file":  os.path.basename(args.prompts),
+        "results":      results,
     }
 
     with open(out_path, "w", encoding="utf-8") as f:
