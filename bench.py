@@ -1,6 +1,8 @@
 """
-bench.py -- ollama-bench MVP
-Measures latency, RAM/VRAM usage and consistency for Ollama models.
+bench.py -- ollama-bench
+Measures throughput, RAM/VRAM usage and consistency for OpenAI-compatible LLM servers.
+
+Compatible with llama-swap, llama-server, and any server that serves /v1/chat/completions.
 
 Usage:
     python bench.py
@@ -10,6 +12,11 @@ Usage:
 
 Output:
     results/<YYYYMMDD_HHMMSS>_bench.json
+
+Note on timing:
+    Wall-clock time is measured client-side per request.
+    time_to_first_token_s is not available without streaming and is always null.
+    tokens_per_second is derived from usage.completion_tokens / wall-clock time.
 """
 
 import argparse
@@ -27,32 +34,37 @@ from datetime import datetime
 # -------------------------------------------------
 # CONFIG
 # -------------------------------------------------
-OLLAMA_BASE_URL   = "http://localhost:11434"
-DEFAULT_PROMPTS   = os.path.join(os.path.dirname(__file__), "bench_prompts.json")
-RESULTS_DIR       = os.path.join(os.path.dirname(__file__), "results")
-DEFAULT_MODELS    = ["phi3", "deepseek-coder:6.7b-instruct-q4_K_M", "llama3.1:8b", "mistral:7b"]
+LLM_BASE_URL    = "http://localhost:8080"   # llama-swap / llama-server
+DEFAULT_PROMPTS = os.path.join(os.path.dirname(__file__), "bench_prompts.json")
+RESULTS_DIR     = os.path.join(os.path.dirname(__file__), "results")
+DEFAULT_MODELS  = ["phi3", "deepseek-coder:6.7b-instruct-q4_K_M", "llama3.1:8b", "mistral:7b"]
 
 
 # -------------------------------------------------
-# OLLAMA
+# LLM — OpenAI-compatible /v1/chat/completions
 # -------------------------------------------------
 
-def ollama_generate(model: str, system: str, prompt: str) -> dict:
+def llm_generate(model: str, system: str, prompt: str) -> dict:
     """
-    Call Ollama /api/generate (stream=false).
-    Returns the full response dict including timing fields:
-      eval_count, eval_duration, prompt_eval_duration, total_duration
+    Call /v1/chat/completions (stream=false).
+    Returns the full response dict. Timing is measured by the caller.
     """
-    full_prompt = f"{system.strip()}\n\n{prompt.strip()}" if system.strip() else prompt.strip()
+    messages = []
+    if system.strip():
+        messages.append({"role": "system", "content": system.strip()})
+    messages.append({"role": "user", "content": prompt.strip()})
+
     payload = json.dumps({
-        "model":  model,
-        "prompt": full_prompt,
-        "stream": False,
-        "options": {"temperature": 0.2, "top_p": 0.9, "num_predict": 512},
+        "model":       model,
+        "messages":    messages,
+        "stream":      False,
+        "max_tokens":  512,
+        "temperature": 0.2,
+        "top_p":       0.9,
     }).encode("utf-8")
 
     req = urllib.request.Request(
-        f"{OLLAMA_BASE_URL}/api/generate",
+        f"{LLM_BASE_URL}/v1/chat/completions",
         data=payload,
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -61,18 +73,21 @@ def ollama_generate(model: str, system: str, prompt: str) -> dict:
         return json.loads(resp.read().decode("utf-8"))
 
 
-def ollama_version() -> str:
+def llm_server_info() -> str:
+    """Return a short description of the running server via /v1/models."""
     try:
-        req = urllib.request.Request(f"{OLLAMA_BASE_URL}/api/version", method="GET")
+        req = urllib.request.Request(f"{LLM_BASE_URL}/v1/models", method="GET")
         with urllib.request.urlopen(req, timeout=5) as resp:
-            return json.loads(resp.read()).get("version", "unknown")
+            data = json.loads(resp.read())
+            models = [m.get("id", "") for m in data.get("data", [])]
+            return f"{len(models)} model(s): {', '.join(models[:4])}"
     except Exception:
         return "unknown"
 
 
-def ollama_is_online() -> bool:
+def llm_is_online() -> bool:
     try:
-        req = urllib.request.Request(f"{OLLAMA_BASE_URL}/api/tags", method="GET")
+        req = urllib.request.Request(f"{LLM_BASE_URL}/v1/models", method="GET")
         with urllib.request.urlopen(req, timeout=5) as resp:
             return resp.status == 200
     except Exception:
@@ -136,14 +151,13 @@ def get_vram_used_mb() -> float | None:
 def get_system_info() -> dict:
     """Collect static system information once at startup."""
     info = {
-        "os":       platform.system(),
-        "os_ver":   platform.version(),
-        "cpu":      platform.processor() or platform.machine(),
-        "python":   platform.python_version(),
+        "os":           platform.system(),
+        "os_ver":       platform.version(),
+        "cpu":          platform.processor() or platform.machine(),
+        "python":       platform.python_version(),
         "ram_total_mb": None,
         "vram_total_mb": None,
     }
-    # RAM total
     try:
         if platform.system() == "Windows":
             result = subprocess.run(
@@ -163,7 +177,6 @@ def get_system_info() -> dict:
     except Exception:
         pass
 
-    # VRAM total
     try:
         result = subprocess.run(
             ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
@@ -186,7 +199,6 @@ def consistency_score(outputs: list[str]) -> float:
     """
     Returns a score from 0.0 to 1.0.
     1.0 = all outputs identical.
-    Lower = more variation across runs.
     Formula: most_common_count / total_runs
     """
     if len(outputs) <= 1:
@@ -204,6 +216,11 @@ def run_prompt(model: str, prompt_def: dict) -> dict:
     """
     Run a single prompt definition against a model N times.
     Returns a result dict with per-run data and a summary.
+
+    Timing notes:
+    - total_duration_s: wall-clock time per request (client-side)
+    - tokens_per_second: usage.completion_tokens / total_duration_s
+    - time_to_first_token_s: always null (requires streaming)
     """
     n_runs    = prompt_def.get("consistency_runs", 3)
     system    = prompt_def.get("system", "")
@@ -214,43 +231,41 @@ def run_prompt(model: str, prompt_def: dict) -> dict:
     outputs = []
 
     for i in range(n_runs):
-        label = f"    run {i + 1}/{n_runs}"
-        print(label, end="", flush=True)
+        print(f"    run {i + 1}/{n_runs}", end="", flush=True)
 
         ram_before  = get_ram_used_mb()
         vram_before = get_vram_used_mb()
+        t0 = time.time()
 
         try:
-            resp = ollama_generate(model, system, prompt)
+            resp = llm_generate(model, system, prompt)
         except Exception as e:
             print(f"  ERROR: {e}")
             runs.append({"run": i + 1, "error": str(e)})
             continue
 
+        total_duration_s = round(time.time() - t0, 4)
         ram_after  = get_ram_used_mb()
         vram_after = get_vram_used_mb()
 
-        # Timing (Ollama returns nanoseconds)
-        eval_count            = resp.get("eval_count", 0)
-        eval_duration_ns      = resp.get("eval_duration", 0)
-        prompt_eval_dur_ns    = resp.get("prompt_eval_duration", 0)
-        total_duration_ns     = resp.get("total_duration", 0)
-
+        # Token count from usage field (may be absent on some servers)
+        usage             = resp.get("usage", {})
+        completion_tokens = usage.get("completion_tokens")
         tokens_per_second = (
-            round(eval_count / (eval_duration_ns / 1e9), 2)
-            if eval_duration_ns > 0 else None
+            round(completion_tokens / total_duration_s, 2)
+            if (completion_tokens and total_duration_s > 0) else None
         )
-        time_to_first_token_s = round(prompt_eval_dur_ns / 1e9, 4) if prompt_eval_dur_ns else None
-        total_duration_s      = round(total_duration_ns  / 1e9, 4) if total_duration_ns  else None
 
-        output_text = resp.get("response", "").strip()
+        # Extract generated text
+        choices     = resp.get("choices", [])
+        output_text = choices[0]["message"]["content"].strip() if choices else ""
         outputs.append(output_text)
 
         run_data = {
             "run":                    i + 1,
-            "tokens_generated":       eval_count,
+            "tokens_generated":       completion_tokens,
             "tokens_per_second":      tokens_per_second,
-            "time_to_first_token_s":  time_to_first_token_s,
+            "time_to_first_token_s":  None,   # not available without streaming
             "total_duration_s":       total_duration_s,
             "ram_used_mb_before":     ram_before,
             "ram_used_mb_after":      ram_after,
@@ -262,9 +277,9 @@ def run_prompt(model: str, prompt_def: dict) -> dict:
         }
         runs.append(run_data)
 
-        tps_str = f"{tokens_per_second:.1f} tok/s" if tokens_per_second else "n/a"
-        ttft_str = f"ttft {time_to_first_token_s:.3f}s" if time_to_first_token_s else ""
-        print(f"  {tps_str}  {ttft_str}")
+        tps_str  = f"{tokens_per_second:.1f} tok/s" if tokens_per_second else "n/a tok/s"
+        time_str = f"{total_duration_s:.2f}s"
+        print(f"  {tps_str}  {time_str}")
 
     # Summary
     valid_runs = [r for r in runs if "error" not in r]
@@ -280,7 +295,7 @@ def run_prompt(model: str, prompt_def: dict) -> dict:
 
         summary = {
             "avg_tokens_per_second":      avg("tokens_per_second"),
-            "avg_time_to_first_token_s":  avg("time_to_first_token_s"),
+            "avg_time_to_first_token_s":  None,   # not available without streaming
             "avg_total_duration_s":       avg("total_duration_s"),
             "avg_tokens_generated":       avg("tokens_generated"),
             "consistency_score":          consistency_score(outputs),
@@ -310,9 +325,9 @@ def compare_results(path_a: str, path_b: str) -> None:
 
     For each (model, prompt_id) pair present in both files, shows:
       - avg tokens/s       (higher is better)
-      - avg time-to-first-token  (lower is better)
+      - avg total duration (lower is better)
       - consistency score  (higher is better)
-    with percentage deltas and a ✓/✗ improvement indicator.
+    with percentage deltas and a checkmark/cross improvement indicator.
     """
     for path in (path_a, path_b):
         if not os.path.exists(path):
@@ -339,47 +354,44 @@ def compare_results(path_a: str, path_b: str) -> None:
         print("[compare] No matching (model, prompt_id) pairs found in both files.")
         return
 
-    # ── header ────────────────────────────────────────────────────────────────
     print("\nollama-bench --compare")
     print(f"  A: {os.path.basename(path_a):<50}  {data_a.get('timestamp','')[:19]}")
     print(f"  B: {os.path.basename(path_b):<50}  {data_b.get('timestamp','')[:19]}")
-    if data_a.get("ollama_version") != data_b.get("ollama_version"):
-        print(f"  Ollama: A={data_a.get('ollama_version')}  B={data_b.get('ollama_version')}")
+    srv_a = data_a.get("llm_server", data_a.get("ollama_version", ""))
+    srv_b = data_b.get("llm_server", data_b.get("ollama_version", ""))
+    if srv_a != srv_b:
+        print(f"  Server: A={srv_a}  B={srv_b}")
     print()
 
-    # ── helpers ───────────────────────────────────────────────────────────────
-
     def fmt(val, decimals=2):
-        return f"{val:>7.{decimals}f}" if val is not None else "      —"
+        return f"{val:>7.{decimals}f}" if val is not None else "      -"
 
     def delta(a, b, higher_is_better=True):
-        """Return a short delta string with improvement indicator."""
         if a is None or b is None or a == 0:
-            return "       —"
+            return "       -"
         pct = (b - a) / abs(a) * 100
         improved = (pct > 0) == higher_is_better
-        tag  = "✓" if improved else "✗"
+        tag  = "+" if improved else "x"
         sign = "+" if pct > 0 else ""
         return f"{tag} {sign}{pct:.1f}%"
 
-    # ── per-model tables ──────────────────────────────────────────────────────
     models = []
     for model, _ in common_keys:
         if model not in models:
             models.append(model)
 
-    col = 28   # prompt_id column width
+    col = 28
 
     for model in models:
         print(f"  model: {model}")
         header = (
             f"  {'prompt_id':<{col}}"
-            f"  {'tok/s A':>8}  {'tok/s B':>8}  {'Δ tok/s':>10}"
-            f"  {'ttft A':>7}  {'ttft B':>7}  {'Δ ttft':>10}"
-            f"  {'cons A':>7}  {'cons B':>7}  {'Δ cons':>10}"
+            f"  {'tok/s A':>8}  {'tok/s B':>8}  {'D tok/s':>10}"
+            f"  {'dur A':>7}  {'dur B':>7}  {'D dur':>10}"
+            f"  {'cons A':>7}  {'cons B':>7}  {'D cons':>10}"
         )
         print(header)
-        print("  " + "─" * (len(header) - 2))
+        print("  " + "-" * (len(header) - 2))
 
         for (m, pid) in common_keys:
             if m != model:
@@ -389,20 +401,19 @@ def compare_results(path_a: str, path_b: str) -> None:
 
             tps_a  = sa.get("avg_tokens_per_second")
             tps_b  = sb.get("avg_tokens_per_second")
-            ttft_a = sa.get("avg_time_to_first_token_s")
-            ttft_b = sb.get("avg_time_to_first_token_s")
+            dur_a  = sa.get("avg_total_duration_s")
+            dur_b  = sb.get("avg_total_duration_s")
             cons_a = sa.get("consistency_score")
             cons_b = sb.get("consistency_score")
 
             print(
                 f"  {pid:<{col}}"
                 f"  {fmt(tps_a):>8}  {fmt(tps_b):>8}  {delta(tps_a, tps_b, higher_is_better=True):>10}"
-                f"  {fmt(ttft_a,3):>7}  {fmt(ttft_b,3):>7}  {delta(ttft_a, ttft_b, higher_is_better=False):>10}"
+                f"  {fmt(dur_a,3):>7}  {fmt(dur_b,3):>7}  {delta(dur_a, dur_b, higher_is_better=False):>10}"
                 f"  {fmt(cons_a):>7}  {fmt(cons_b):>7}  {delta(cons_a, cons_b, higher_is_better=True):>10}"
             )
         print()
 
-    # ── overall summary ───────────────────────────────────────────────────────
     print("  Summary (tok/s):")
     deltas = []
     for (model, pid) in common_keys:
@@ -425,7 +436,9 @@ def compare_results(path_a: str, path_b: str) -> None:
 # -------------------------------------------------
 
 def main():
-    parser = argparse.ArgumentParser(description="ollama-bench -- Latency, RAM/VRAM and consistency benchmark")
+    parser = argparse.ArgumentParser(
+        description="ollama-bench -- Throughput, RAM/VRAM and consistency benchmark for OpenAI-compatible LLM servers"
+    )
     parser.add_argument("--models",       nargs="+", default=DEFAULT_MODELS, help="Models to benchmark")
     parser.add_argument("--prompts",      default=DEFAULT_PROMPTS,           help="Path to bench_prompts.json")
     parser.add_argument("--prompt-ids",   nargs="+", default=[],             help="Run only specific prompt IDs")
@@ -433,12 +446,10 @@ def main():
     parser.add_argument("--compare",      nargs=2, metavar="FILE",           help="Compare two result JSON files and exit")
     args = parser.parse_args()
 
-    # Compare mode — load two result files, print side-by-side diff and exit
     if args.compare:
         compare_results(args.compare[0], args.compare[1])
         return
 
-    # Load prompts
     if not os.path.exists(args.prompts):
         print(f"[ERROR] Prompts file not found: {args.prompts}")
         sys.exit(1)
@@ -461,22 +472,25 @@ def main():
         print("[ERROR] No matching prompts found.")
         sys.exit(1)
 
-    # Check Ollama
-    if not ollama_is_online():
-        print("[ERROR] Ollama is offline. Start Ollama and retry.")
+    if not llm_is_online():
+        print(f"[ERROR] LLM server is offline. Start llama-swap or llama-server on {LLM_BASE_URL} and retry.")
         sys.exit(1)
 
-    version    = ollama_version()
-    sys_info   = get_system_info()
-    timestamp  = datetime.now().strftime("%Y%m%d_%H%M%S")
+    server_info = llm_server_info()
+    sys_info    = get_system_info()
+    timestamp   = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     print(f"\nollama-bench")
-    print(f"  Ollama:  {version}")
+    print(f"  Server:  {LLM_BASE_URL}  ({server_info})")
     print(f"  OS:      {sys_info['os']} {sys_info['os_ver'][:40]}")
     print(f"  RAM:     {sys_info['ram_total_mb']} MB total")
-    print(f"  VRAM:    {sys_info['vram_total_mb']} MB total" if sys_info["vram_total_mb"] else "  VRAM:    not detected")
+    if sys_info["vram_total_mb"]:
+        print(f"  VRAM:    {sys_info['vram_total_mb']} MB total")
+    else:
+        print(f"  VRAM:    not detected")
     print(f"  Models:  {', '.join(args.models)}")
     print(f"  Prompts: {len(prompts)}")
+    print(f"  Note:    time_to_first_token not measured (non-streaming mode)")
     print()
 
     results = []
@@ -489,22 +503,23 @@ def main():
             results.append(result)
             s = result["summary"]
             if s:
-                print(f"  summary: {s.get('avg_tokens_per_second')} tok/s avg  |  "
-                      f"ttft {s.get('avg_time_to_first_token_s')}s  |  "
-                      f"consistency {s.get('consistency_score')}")
+                tps  = s.get("avg_tokens_per_second")
+                dur  = s.get("avg_total_duration_s")
+                cons = s.get("consistency_score")
+                print(f"  summary: {tps} tok/s avg  |  {dur}s avg  |  consistency {cons}")
         print()
 
-    # Save results
     os.makedirs(RESULTS_DIR, exist_ok=True)
     out_path = os.path.join(RESULTS_DIR, f"{timestamp}_bench.json")
 
     output = {
-        "timestamp":     datetime.now().isoformat(),
-        "ollama_version": version,
-        "system":        sys_info,
-        "models":        args.models,
-        "prompt_file":   os.path.basename(args.prompts),
-        "results":       results,
+        "timestamp":   datetime.now().isoformat(),
+        "llm_server":  server_info,
+        "llm_base_url": LLM_BASE_URL,
+        "system":      sys_info,
+        "models":      args.models,
+        "prompt_file": os.path.basename(args.prompts),
+        "results":     results,
     }
 
     with open(out_path, "w", encoding="utf-8") as f:
