@@ -1,6 +1,9 @@
 # Benchmark results — timestamped JSON outputs
 results/
 
+# Background run log
+bench_run.log
+
 # Python
 venv/
 .venv/

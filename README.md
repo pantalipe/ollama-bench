@@ -1,18 +1,34 @@
 # ollama-bench
 
-Local benchmark tool for Ollama models. Measures latency, RAM/VRAM usage and output consistency — designed to inform model routing decisions in `panda_client.py`.
+Throughput, RAM/VRAM usage and consistency benchmark for OpenAI-compatible local LLM
+servers. Designed to inform model routing decisions in `panda_client.py`.
 
 ## What it measures
 
-- **Latency** — tokens/s and time-to-first-token (from Ollama's native timing fields)
-- **RAM usage** — delta before/after each inference (via `wmic` on Windows, `/proc/meminfo` on Linux)
+- **Throughput** — tokens/s derived from `usage.completion_tokens` / wall-clock time
+- **Total duration** — wall-clock time per request (client-side, includes network overhead)
+- **RAM usage** — delta before/after each inference (Win32 API on Windows, `/proc/meminfo` on Linux)
 - **VRAM usage** — delta via `nvidia-smi` (graceful fallback if unavailable)
-- **Consistency** — same prompt run N times, score = most_common_output / total_runs
+- **Consistency** — same prompt run N times; score = most_common_output / total_runs
+
+> `time_to_first_token` is not measured — it requires streaming mode, which this tool
+> does not use. The field is always `null` in result files.
+
+## Requirements
+
+Python 3.10+. No external dependencies — stdlib only.
+
+An OpenAI-compatible LLM server must be running on port 8080:
+
+```bash
+# llama-swap example
+llama-swap --config llama-swap.yaml
+```
 
 ## Usage
 
 ```bash
-# Benchmark default models (phi3 + deepseek-coder)
+# Benchmark default models
 python bench.py
 
 # Benchmark specific models
@@ -37,17 +53,18 @@ Results are saved to `results/<YYYYMMDD_HHMMSS>_bench.json`. Example structure:
 
 ```json
 {
-  "timestamp": "2025-04-23T14:00:00",
-  "ollama_version": "0.3.x",
-  "system": { "os": "Windows", "ram_total_mb": 8192, "vram_total_mb": 4096 },
-  "models": ["phi3", "deepseek-coder:6.7b-instruct-q4_K_M"],
+  "timestamp": "2026-05-09T14:00:00",
+  "llm_server": "4 model(s): phi3, deepseek-coder:6.7b-instruct-q4_K_M, ...",
+  "llm_base_url": "http://localhost:8080",
+  "system": { "os": "Windows", "ram_total_mb": 8156.9, "vram_total_mb": null },
+  "models": ["phi3"],
   "results": [
     {
       "model": "phi3",
       "prompt_id": "commit_msg_simple",
       "summary": {
         "avg_tokens_per_second": 18.4,
-        "avg_time_to_first_token_s": 0.312,
+        "avg_time_to_first_token_s": null,
         "avg_total_duration_s": 4.21,
         "consistency_score": 1.0,
         "peak_ram_delta_mb": 42.0,
@@ -91,9 +108,9 @@ Edit `bench_prompts.json` and add an entry:
 ## Stack
 
 - Python stdlib only (no pip installs)
-- Ollama local API (`http://localhost:11434`)
+- OpenAI-compatible API (`http://localhost:8080`) — llama-swap, llama-server
 - `nvidia-smi` for VRAM (optional)
-- `wmic` for RAM on Windows
+- Win32 `GlobalMemoryStatusEx` for RAM on Windows (no external tools required)
 
 ## Project structure
 
@@ -103,4 +120,5 @@ ollama-bench/
   bench_prompts.json    # prompt definitions
   results/              # JSON output files (gitignored)
   README.md
+  CHANGELOG.md
 ```
