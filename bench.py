@@ -242,6 +242,10 @@ def run_prompt(model: str, prompt_def: dict) -> dict:
     prompt    = prompt_def["prompt"]
     prompt_id = prompt_def["id"]
 
+    # Qwen3 thinking mode: prepend /no_think so the model skips chain-of-thought
+    if "qwen3" in model.lower():
+        system = "/no_think\n" + system if system else "/no_think"
+
     runs    = []
     outputs = []
 
@@ -286,7 +290,7 @@ def run_prompt(model: str, prompt_def: dict) -> dict:
             "vram_used_mb_before":    vram_before,
             "vram_used_mb_after":     vram_after,
             "vram_delta_mb":          round(vram_after - vram_before, 1) if (vram_before is not None and vram_after is not None) else None,
-            "output_preview":         output_text[:120].replace("\n", " "),
+            "output_preview":         output_text[:500].replace("\n", " "),
         }
         runs.append(run_data)
 
