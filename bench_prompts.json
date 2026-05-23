@@ -6,7 +6,7 @@
       "task": "text",
       "description": "Commit message from a small Python diff",
       "consistency_runs": 3,
-      "system": "You are a git commit message generator. Output ONE single line following Conventional Commits: <type>(<scope>): <description>. Write NOTHING else.",
+      "system": "You are a git commit message generator. Output ONE single line following Conventional Commits: <type>(<scope>): <description>. Keep the line under 72 characters. Write NOTHING else.",
       "prompt": "Commit message:\n\n### git diff\n--- a/server.py\n+++ b/server.py\n@@ -12,6 +12,10 @@ from panda_client import PandaClient\n+import logging\n+\n+logging.basicConfig(level=logging.INFO)\n+logger = logging.getLogger(__name__)\n\n def start_server():\n-    print('Starting...')\n+    logger.info('Starting server on port %s', PORT)"
     },
     {
@@ -15,7 +15,7 @@
       "task": "text",
       "description": "Commit message from a multi-file diff",
       "consistency_runs": 3,
-      "system": "You are a git commit message generator. Output ONE single line following Conventional Commits: <type>(<scope>): <description>. Write NOTHING else.",
+      "system": "You are a git commit message generator. Output ONE single line following Conventional Commits: <type>(<scope>): <description>. Keep the line under 72 characters. Write NOTHING else.",
       "prompt": "Commit message:\n\n### git diff\n--- a/panda_client.py\n+++ b/panda_client.py\n@@ -1,5 +1,6 @@\n+DEFAULT_CODE_MODEL = 'deepseek-coder:6.7b-instruct-q4_K_M'\n-DEFAULT_CODE_MODEL = 'deepseek-coder'\n\n--- a/README.md\n+++ b/README.md\n@@ -10,0 +11,3 @@\n+## Model Routing\n+Text tasks use phi3. Code tasks use deepseek-coder:6.7b-instruct-q4_K_M.\n+Auto-routing is based on keyword scoring."
     },
     {
