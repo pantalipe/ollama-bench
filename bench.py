@@ -34,7 +34,7 @@ from datetime import datetime
 # -------------------------------------------------
 # CONFIG
 # -------------------------------------------------
-LLM_BASE_URL    = "http://localhost:8080"   # llama-swap / llama-server
+LLM_BASE_URL    = os.environ.get("LLM_BASE_URL", "http://localhost:8081")   # llama-swap / llama-server
 DEFAULT_PROMPTS = os.path.join(os.path.dirname(__file__), "bench_prompts.json")
 RESULTS_DIR     = os.path.join(os.path.dirname(__file__), "results")
 DEFAULT_MODELS  = ["phi3", "deepseek-coder:6.7b-instruct-q4_K_M", "llama3.1:8b", "mistral:7b"]
