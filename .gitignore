@@ -1,6 +1,9 @@
 # Benchmark results — timestamped JSON outputs
 results/
 
+# Quality/judge reports — generated benchmark output
+quality/
+
 # Background run log
 bench_run.log
 

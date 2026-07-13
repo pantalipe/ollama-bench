@@ -38,6 +38,9 @@ DEFAULT_MODELS = [
     "deepseek-coder:6.7b-instruct-q4_K_M",
     "llama3.1:8b",
     "mistral:7b",
+    "qwen3:8b",
+    "phi4-mini",
+    "qwen3:4b",
 ]
 DEFAULT_DELAY  = 15   # seconds between models
 
