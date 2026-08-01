@@ -18,7 +18,7 @@ servers. Designed to inform model routing decisions in `panda_client.py`.
 
 Python 3.10+. No external dependencies — stdlib only.
 
-An OpenAI-compatible LLM server must be running on port 8080:
+An OpenAI-compatible LLM server must be running on port 8081:
 
 ```bash
 # llama-swap example
@@ -55,7 +55,7 @@ Results are saved to `results/<YYYYMMDD_HHMMSS>_bench.json`. Example structure:
 {
   "timestamp": "2026-05-09T14:00:00",
   "llm_server": "4 model(s): phi3, deepseek-coder:6.7b-instruct-q4_K_M, ...",
-  "llm_base_url": "http://localhost:8080",
+  "llm_base_url": "http://localhost:8081",
   "system": { "os": "Windows", "ram_total_mb": 8156.9, "vram_total_mb": null },
   "models": ["phi3"],
   "results": [
@@ -108,7 +108,7 @@ Edit `bench_prompts.json` and add an entry:
 ## Stack
 
 - Python stdlib only (no pip installs)
-- OpenAI-compatible API (`http://localhost:8080`) — llama-swap, llama-server
+- OpenAI-compatible API (`http://localhost:8081`) — llama-swap, llama-server
 - `nvidia-smi` for VRAM (optional)
 - Win32 `GlobalMemoryStatusEx` for RAM on Windows (no external tools required)
 

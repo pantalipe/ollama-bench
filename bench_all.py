@@ -154,7 +154,7 @@ def main():
     print(f"  Models:  {', '.join(args.models)}")
     if args.prompt_ids:
         print(f"  Prompts: {', '.join(args.prompt_ids)}")
-    print(f"  NOTE:    llama-swap must be running on :8080 before starting.")
+    print(f"  NOTE:    llama-swap must be running on :8081 before starting.")
     print(f"           Run 'panda llm start' if not already up.")
     print()
 
